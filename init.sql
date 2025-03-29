@@ -1,0 +1,8 @@
+CREATE TABLE Users (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(100) NOT NULL,
+    mail VARCHAR(150) UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    jwt_token  JSON,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

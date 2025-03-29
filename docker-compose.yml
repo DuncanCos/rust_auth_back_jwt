@@ -1,0 +1,16 @@
+
+services:
+  postgres:
+    image: postgres:17.4
+    container_name: my_postgres_auth_jwt
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: db_name
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

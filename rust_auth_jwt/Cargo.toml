@@ -7,11 +7,12 @@ edition = "2021"
 
 tokio = { version = "1.37.0", features = ["macros", "rt-multi-thread"] }
 axum = "0.8.1"
+axum-extra = "0.10.1"
 sqlx = {version = "0.8.0", features = ["postgres","runtime-async-std"] }
 serde = {version = "1.0.209", features = ["derive"]}
 tower-http = { version = "0.6.2" , features = ["cors","trace"]}
 bcrypt = "0.17"
-
+time = "0.3.41"
 
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["fmt", "json"] }
