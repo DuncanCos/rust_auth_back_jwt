@@ -8,6 +8,7 @@ mod  middlewares;
 use tracing_subscriber::FmtSubscriber;
 use tracing::Level;
 
+use std::net::SocketAddr;
 
 #[tokio::main]
 async fn main() {
@@ -36,5 +37,5 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await
         .unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener,  app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
 }

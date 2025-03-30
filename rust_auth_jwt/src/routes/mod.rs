@@ -2,7 +2,7 @@ use axum::{Extension, Router, routing::{get, post}};
 use sqlx::postgres::PgPool;
 use tower_http::cors::{CorsLayer, Any};
 
-use time::Duration;
+use tower_cookies;
 
 
 mod users_routes;
@@ -35,6 +35,7 @@ pub fn routing(pool: PgPool) -> Router {
         .route("/session", get(users_controllers::get_session))
         .layer(Extension(pool))
         .layer(cors)
+        .layer(tower_cookies::CookieManagerLayer::new())
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::INFO)) // Log des requêtes entrantes

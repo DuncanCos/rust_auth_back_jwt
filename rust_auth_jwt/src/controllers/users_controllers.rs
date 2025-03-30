@@ -1,6 +1,11 @@
 use crate::models::user_model::Users;
-use axum::http::StatusCode;
-use axum::{extract, extract::Path, response::IntoResponse, Extension, Json};
+use axum::http::{header, StatusCode};
+use axum::{extract, extract::ConnectInfo , extract::Path, response::IntoResponse, Extension, Json, http::header::HeaderMap};
+
+use axum_extra::extract::cookie::{CookieJar, Cookie};
+use tower_cookies;
+use std::net::SocketAddr;
+
 use sqlx::postgres::PgPool;
 
 use serde::{Deserialize, Serialize};
@@ -9,6 +14,9 @@ use sqlx::FromRow;
 use bcrypt::{hash, verify, DEFAULT_COST};
 
 use log;
+
+use chrono::{prelude::*, Duration};
+use jsonwebtoken::{encode, decode, Header, Algorithm, Validation, EncodingKey, DecodingKey};
 
 pub async fn users(Extension(_pool): Extension<PgPool>) -> String {
     String::from("users")
@@ -41,8 +49,7 @@ pub struct BlankUser {
 
 // const COUNTER_KEY: &str = "counter";
 
-#[derive(Default, Deserialize, Serialize)]
-struct Counter(usize);
+
 
 pub async fn test_session() -> impl IntoResponse {}
 
@@ -56,17 +63,114 @@ pub async fn get_session() -> impl IntoResponse {
     (StatusCode::ACCEPTED, format!("no session")).into_response()
 }
 
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Claims {
+    user: String,
+    company: String,
+    exp: usize,
+}
+
 pub async fn login(
     Extension(pool): Extension<PgPool>,
+    jar: CookieJar,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    cookies: tower_cookies::Cookies,
     extract::Json(body): extract::Json<LoginUser>,
 ) -> impl IntoResponse {
+
+    if let Some(jar) = jar.get("jwt_token") {
+        log::info!("cookie : {}",jar);
+        // yes jar
+    }else {
+        //no jar
+        log::info!("no cookie");
+    }
+
+    let mail = body.mail;
+    let password = body.password;
+    let ip = addr.to_string();
+    let user_agent = headers["user-agent"].clone();
+
+    eprintln!("ip {:?} ua {:?} mail {} pass {}", ip, user_agent, mail, password);
+
+    let hash_pass = match sqlx::query_as::<_, Users>(
+        "SELECT * FROM users WHERE  mail=$1",
+    )
+    .bind(mail.clone())
+    .fetch_one(&pool)
+    .await
+    {
+        Ok(r) => r.password ,
+        Err(e) => {
+            eprintln!("error while fetching db {:?}",e);
+            "eror password".to_string()},
+    };
+
+    eprintln!("hash of {} {}",mail ,hash_pass);
+
+    let is_valid= match verify(password,&hash_pass){
+        Ok(r) => {r},
+        Err(_e) => {
+            eprintln!("error verify");
+            false}
+    };
+
+    if is_valid {
+        //TODO create jwt + put things into db usersesions
+        //part1 create jwt
+
+        let test_time = Utc::now() + Duration::minutes(20);
+        let convert_time = test_time.timestamp();
+        
+        let refresh_time = Utc::now() + Duration::days(1);
+        let refresh_convert_time = refresh_time.timestamp();
+       
+
+        let new_claim = Claims{
+            user: mail.clone(),
+            company: "autre".to_string(),
+            exp: convert_time as usize 
+        };
+
+        let refresh_claim = Claims{
+            user: mail.clone(),
+            company: "autre".to_string(),
+            exp: refresh_convert_time as usize 
+        };
+
+        let token = encode(&Header::default(), &new_claim, &EncodingKey::from_secret("secret".as_ref())).unwrap_or_default();
+        let refresh_token = encode(&Header::default(), &refresh_claim, &EncodingKey::from_secret("secret".as_ref())).unwrap_or_default();
+
+        eprintln!("token result {}",token);
+
+        //creation de cookie de session
+        cookies.add( tower_cookies::Cookie::new("auth", token));
+        cookies.add( tower_cookies::Cookie::new("refresh", refresh_token));
+      
+
+        return (StatusCode::OK, "yes token connexion wip").into_response();
+
+    }
+
     (StatusCode::OK, "no connexion wip").into_response()
 }
 
 pub async fn subscribe(
     Extension(pool): Extension<PgPool>,
+    jar: CookieJar,
     extract::Json(body): extract::Json<SubscribeUser>,
 ) -> impl IntoResponse {
+
+    if let Some(jar) = jar.get("jwt_token") {
+        log::info!("cookie : {}",jar);
+        // yes jar
+    }else {
+        //no jar
+        log::info!("no cookie");
+    }
+
     let hashed_password = hash(body.password, DEFAULT_COST).unwrap_or("notapass".to_string());
     let _info = format!("{} {} {}", body.username, body.mail, hashed_password);
 
