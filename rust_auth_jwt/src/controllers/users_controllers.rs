@@ -1,4 +1,5 @@
 use crate::models::user_model::Users;
+use crate::models::user_session_model::UsersSession;
 use axum::http::{header, StatusCode};
 use axum::{extract, extract::ConnectInfo , extract::Path, response::IntoResponse, Extension, Json, http::header::HeaderMap};
 
@@ -51,7 +52,10 @@ pub struct BlankUser {
 
 
 
-pub async fn test_session() -> impl IntoResponse {}
+pub async fn test_session() -> impl IntoResponse {
+    eprintln!("isok test session");
+    (StatusCode::OK, "isok session").into_response()
+}
 
 pub async fn logout() -> impl IntoResponse {
     (StatusCode::OK, "disconnected").into_response()
@@ -66,7 +70,7 @@ pub async fn get_session() -> impl IntoResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
-    user: String,
+    user: i32,
     company: String,
     exp: usize,
 }
@@ -95,18 +99,21 @@ pub async fn login(
 
     eprintln!("ip {:?} ua {:?} mail {} pass {}", ip, user_agent, mail, password);
 
-    let hash_pass = match sqlx::query_as::<_, Users>(
+    let user = match sqlx::query_as::<_, Users>(
         "SELECT * FROM users WHERE  mail=$1",
     )
     .bind(mail.clone())
     .fetch_one(&pool)
     .await
     {
-        Ok(r) => r.password ,
+        Ok(r) => r ,
         Err(e) => {
             eprintln!("error while fetching db {:?}",e);
-            "eror password".to_string()},
+            Users::default()
+            },
     };
+
+    let hash_pass = user.password;
 
     eprintln!("hash of {} {}",mail ,hash_pass);
 
@@ -129,13 +136,13 @@ pub async fn login(
        
 
         let new_claim = Claims{
-            user: mail.clone(),
+            user: user.id.clone(),
             company: "autre".to_string(),
             exp: convert_time as usize 
         };
 
         let refresh_claim = Claims{
-            user: mail.clone(),
+            user: user.id.clone(),
             company: "autre".to_string(),
             exp: refresh_convert_time as usize 
         };
@@ -147,8 +154,22 @@ pub async fn login(
 
         //creation de cookie de session
         cookies.add( tower_cookies::Cookie::new("auth", token));
-        cookies.add( tower_cookies::Cookie::new("refresh", refresh_token));
+        cookies.add( tower_cookies::Cookie::new("refresh", refresh_token.clone()));
       
+        match sqlx::query_as::<_, UsersSession>(
+            "INSERT INTO user_sessions (user_id, device, ip_address, user_agent, refresh_token, expires_at) VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '7 days')",
+        )
+        .bind(user.id)
+        .bind("nonedevice")
+        .bind(ip)
+        .bind(user_agent.to_str().unwrap_or_default())
+        .bind(refresh_token)
+        .fetch_all(&pool)
+        .await
+        {
+            Ok(r) => (StatusCode::OK, format!("{:?}", r)).into_response(),
+            Err(e) => (StatusCode::EXPECTATION_FAILED, format!("{}", e)).into_response(),
+        };
 
         return (StatusCode::OK, "yes token connexion wip").into_response();
 
