@@ -1,9 +1,9 @@
 use crate::models::user_model::Users;
 use crate::models::user_session_model::UsersSession;
-use axum::http::{header, StatusCode};
+use axum::http::StatusCode;
 use axum::{extract, extract::ConnectInfo , extract::Path, response::IntoResponse, Extension, Json, http::header::HeaderMap};
 
-use axum_extra::extract::cookie::{CookieJar, Cookie};
+use axum_extra::extract::cookie::CookieJar;
 use tower_cookies;
 use std::net::SocketAddr;
 
@@ -16,8 +16,10 @@ use bcrypt::{hash, verify, DEFAULT_COST};
 
 use log;
 
-use chrono::{prelude::*, Duration};
-use jsonwebtoken::{encode, decode, Header, Algorithm, Validation, EncodingKey, DecodingKey};
+use chrono::{prelude::*, Duration,Utc};
+use jsonwebtoken::{encode,decode, Header, EncodingKey, DecodingKey, Validation};
+
+use uuid::Uuid;
 
 pub async fn users(Extension(_pool): Extension<PgPool>) -> String {
     String::from("users")
@@ -34,6 +36,7 @@ pub struct SubscribeUser {
     mail: String,
     password: String,
 }
+
 
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct LoginUser {
@@ -125,8 +128,6 @@ pub async fn login(
     };
 
     if is_valid {
-        //TODO create jwt + put things into db usersesions
-        //part1 create jwt
 
         let test_time = Utc::now() + Duration::minutes(20);
         let convert_time = test_time.timestamp();
@@ -141,16 +142,16 @@ pub async fn login(
             exp: convert_time as usize 
         };
 
+        let refresh_token = Uuid::new_v4();
+
         let refresh_claim = Claims{
             user: user.id.clone(),
-            company: "autre".to_string(),
+            company: refresh_token.to_string(),
             exp: refresh_convert_time as usize 
         };
 
         let token = encode(&Header::default(), &new_claim, &EncodingKey::from_secret("secret".as_ref())).unwrap_or_default();
         let refresh_token = encode(&Header::default(), &refresh_claim, &EncodingKey::from_secret("secret".as_ref())).unwrap_or_default();
-
-        eprintln!("token result {}",token);
 
         //creation de cookie de session
         cookies.add( tower_cookies::Cookie::new("auth", token));
@@ -207,6 +208,63 @@ pub async fn subscribe(
         Ok(r) => (StatusCode::CREATED, format!("{:?}", r)).into_response(),
         Err(e) => (StatusCode::EXPECTATION_FAILED, format!("{}", e)).into_response(),
     }
+}
+
+pub async fn refresh_token(
+    Extension(pool): Extension<PgPool>,
+    jar: CookieJar,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+
+    if jar.get("refresh").is_none() {
+        return (
+            StatusCode::UNAUTHORIZED,
+            format!("no coookie")
+        ).into_response();
+    }
+
+    let refresh_cookie =  jar.get("refresh").unwrap();
+    let jwt_str = refresh_cookie.value();
+
+    let jwt = decode::<Claims>(
+        jwt_str,
+        &DecodingKey::from_secret("secret".as_ref()),
+        &Validation::default(),
+    )
+    .unwrap();
+
+    let ip = addr.to_string();
+    let user_agent = headers["user-agent"].to_str().unwrap_or_default();
+    let refresh_token_str = jwt.claims.company;
+    let user_id = jwt.claims.user;
+
+    let user_session = match sqlx::query_as::<_, UsersSession>("sql a fiare")
+        .bind(user_id)
+        .bind(ip)
+        .bind(user_agent)
+        .bind(refresh_token_str)
+        .fetch_one(&pool)
+        .await{
+            Ok(r) => {r},
+            Err(_err) => { UsersSession::default()}
+    };
+
+    let session_date_expire = user_session.expires_at;
+
+    let now = Utc::now().naive_utc();
+
+    let diff = now > session_date_expire;
+
+    if diff {
+        //TODO create new auth cookie (remove before) new refresh token (db modif)
+
+    }else{
+       return (StatusCode::FORBIDDEN, "relog needed".to_string()).into_response();
+    }
+   
+
+    (StatusCode::OK, "token refreshed".to_string()).into_response()
 }
 
 pub async fn all_users(Extension(pool): Extension<PgPool>) -> impl IntoResponse {

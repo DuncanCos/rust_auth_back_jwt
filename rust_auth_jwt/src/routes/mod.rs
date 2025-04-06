@@ -33,6 +33,7 @@ pub fn routing(pool: PgPool) -> Router {
         .route("/login", post(users_controllers::login))
         .route("/logout", get(users_controllers::logout))
         .route("/session", get(users_controllers::get_session))
+        .route("/refresh",get(users_controllers::refresh_token))
         .layer(Extension(pool))
         .layer(cors)
         .layer(tower_cookies::CookieManagerLayer::new())
