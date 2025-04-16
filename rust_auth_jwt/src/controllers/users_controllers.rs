@@ -213,6 +213,7 @@ pub async fn subscribe(
 pub async fn refresh_token(
     Extension(pool): Extension<PgPool>,
     jar: CookieJar,
+    cookies: tower_cookies::Cookies,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
@@ -259,12 +260,49 @@ pub async fn refresh_token(
     if diff {
         //TODO create new auth cookie (remove before) new refresh token (db modif)
 
+        let user_session_id = user_session.user_id;
+        let session_time = user_session.expires_at;
+        let refresh_old_time = DateTime::from_timestamp(jwt.claims.exp as i64, 0)
+        .unwrap_or_default();
+        let default_time: DateTime<Utc> =  Utc::now();
+        if refresh_old_time == default_time || refresh_old_time >= Utc::now() {
+            // faut allez se relogins
+        }
+
+
+        // code a moitié ctrlc ctrlv  var a renomé + test a faire
+        
+        let test_time = Utc::now() + Duration::minutes(20);
+        let convert_time = test_time.timestamp();
+
+        let new_claim = Claims{
+            user: user_session_id.clone(),
+            company: "autre".to_string(),
+            exp: convert_time as usize 
+        };
+
+        let refresh_token = Uuid::new_v4();
+
+        let refresh_claim = Claims{
+            user: user_session_id.clone(),
+            company: refresh_token.to_string(),
+            exp: jwt.claims.exp 
+        };
+
+        let token = encode(&Header::default(), &new_claim, &EncodingKey::from_secret("secret".as_ref())).unwrap_or_default();
+        let refresh_token = encode(&Header::default(), &refresh_claim, &EncodingKey::from_secret("secret".as_ref())).unwrap_or_default();
+
+        //creation de cookie de session
+        cookies.add( tower_cookies::Cookie::new("auth", token));
+        cookies.add( tower_cookies::Cookie::new("refresh", refresh_token.clone()));
+        (StatusCode::OK, "token refreshed".to_string()).into_response()
+
     }else{
        return (StatusCode::FORBIDDEN, "relog needed".to_string()).into_response();
     }
    
 
-    (StatusCode::OK, "token refreshed".to_string()).into_response()
+    
 }
 
 pub async fn all_users(Extension(pool): Extension<PgPool>) -> impl IntoResponse {
