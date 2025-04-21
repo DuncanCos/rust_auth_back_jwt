@@ -5,6 +5,7 @@ use axum::{extract, extract::ConnectInfo , extract::Path, response::IntoResponse
 
 use axum_extra::extract::cookie::CookieJar;
 use tower_cookies;
+
 use std::net::SocketAddr;
 
 use sqlx::postgres::PgPool;
@@ -14,7 +15,7 @@ use sqlx::FromRow;
 
 use bcrypt::{hash, verify, DEFAULT_COST};
 
-use log;
+use log::{self, info,error};
 
 use chrono::{prelude::*, Duration,Utc};
 use jsonwebtoken::{encode,decode, Header, EncodingKey, DecodingKey, Validation};
@@ -60,11 +61,7 @@ pub async fn test_session() -> impl IntoResponse {
     (StatusCode::OK, "isok session").into_response()
 }
 
-pub async fn logout() -> impl IntoResponse {
-    (StatusCode::OK, "disconnected").into_response()
 
-    // (StatusCode::EXPECTATION_FAILED, "error while disconnecting").into_response()
-}
 
 pub async fn get_session() -> impl IntoResponse {
     (StatusCode::ACCEPTED, format!("no session")).into_response()
@@ -228,19 +225,23 @@ pub async fn refresh_token(
     let refresh_cookie =  jar.get("refresh").unwrap();
     let jwt_str = refresh_cookie.value();
 
-    let jwt = decode::<Claims>(
+    let jwt = match decode::<Claims>(
         jwt_str,
         &DecodingKey::from_secret("secret".as_ref()),
         &Validation::default(),
-    )
-    .unwrap();
-
+    ){
+        Ok(r)=>r,
+        Err(_err)=> {
+            return (StatusCode::FORBIDDEN, "relog needed 4".to_string()).into_response();
+        } 
+    };
     let ip = addr.to_string();
     let user_agent = headers["user-agent"].to_str().unwrap_or_default();
     let refresh_token_str = jwt.claims.company;
     let user_id = jwt.claims.user;
+    println!("user id : {:?}", user_id);
 
-    let user_session = match sqlx::query_as::<_, UsersSession>("sql a fiare")
+    let user_session = match sqlx::query_as::<_, UsersSession>("SELECT * FROM user_sessions  WHERE user_id=$1 ANS ip_address=$2 AND user_agent=$3 AND refresh_token=$4  ")
         .bind(user_id)
         .bind(ip)
         .bind(user_agent)
@@ -258,53 +259,89 @@ pub async fn refresh_token(
     let diff = now > session_date_expire;
 
     if diff {
-        //TODO create new auth cookie (remove before) new refresh token (db modif)
-
+       
         let user_session_id = user_session.user_id;
-        let session_time = user_session.expires_at;
+       
         let refresh_old_time = DateTime::from_timestamp(jwt.claims.exp as i64, 0)
         .unwrap_or_default();
+
         let default_time: DateTime<Utc> =  Utc::now();
-        if refresh_old_time == default_time || refresh_old_time >= Utc::now() {
-            // faut allez se relogins
+
+        if refresh_old_time == default_time  {
+            return (StatusCode::FORBIDDEN, "relog needed 1".to_string()).into_response();
         }
 
 
-        // code a moitié ctrlc ctrlv  var a renomé + test a faire
         
-        let test_time = Utc::now() + Duration::minutes(20);
-        let convert_time = test_time.timestamp();
+        
+        let new_delay_utc = Utc::now() + Duration::minutes(20);
+        let new_delay_dt = new_delay_utc.timestamp();
 
-        let new_claim = Claims{
+        let new_auth_token = Claims{
             user: user_session_id.clone(),
             company: "autre".to_string(),
-            exp: convert_time as usize 
+            exp: new_delay_dt as usize 
         };
 
-        let refresh_token = Uuid::new_v4();
+        let new_refresh_token = Uuid::new_v4();
 
         let refresh_claim = Claims{
             user: user_session_id.clone(),
-            company: refresh_token.to_string(),
+            company: new_refresh_token.to_string(),
             exp: jwt.claims.exp 
         };
 
-        let token = encode(&Header::default(), &new_claim, &EncodingKey::from_secret("secret".as_ref())).unwrap_or_default();
-        let refresh_token = encode(&Header::default(), &refresh_claim, &EncodingKey::from_secret("secret".as_ref())).unwrap_or_default();
+       
+       
 
+        let token = encode(&Header::default(), &new_auth_token, &EncodingKey::from_secret("secret".as_ref())).unwrap_or_default();
+        let refresh_token = encode(&Header::default(), &refresh_claim, &EncodingKey::from_secret("secret".as_ref())).unwrap_or_default();
+        match sqlx::query_as::<_, UsersSession>("UPDATE user_sessions SET refresh_token = $2 WHERE id=$1 ")
+        .bind(user_session_id)
+        .bind(refresh_token.clone())
+        .fetch_all(&pool)
+        .await{
+            Ok(_r) => {info!("reset ok")},
+            Err(err) => { 
+                error!("error while recreating auth {:?} {:?}", err, user_id);
+                return (StatusCode::FORBIDDEN, "relog needed 3".to_string()).into_response();
+            }
+     };
         //creation de cookie de session
         cookies.add( tower_cookies::Cookie::new("auth", token));
         cookies.add( tower_cookies::Cookie::new("refresh", refresh_token.clone()));
         (StatusCode::OK, "token refreshed".to_string()).into_response()
 
     }else{
-       return (StatusCode::FORBIDDEN, "relog needed".to_string()).into_response();
+       return (StatusCode::FORBIDDEN, "relog needed 2".to_string()).into_response();
     }
    
 
     
 }
 
+pub async fn logout(
+    Extension(pool): Extension<PgPool>,
+    jar: CookieJar,
+    cookies: tower_cookies::Cookies,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+
+
+    //TODO a finir le logout supprimer de la session + supprimer cookies
+    let refresh_token = jar.clone().get("refresh").unwrap();
+    let auth_token= jar.clone().get("auth").unwrap();
+
+    let _ = jar.clone().remove("refresh");
+    let _ = jar.clone().remove("auth");
+    (StatusCode::OK, "disconnected").into_response()
+
+    // (StatusCode::EXPECTATION_FAILED, "error while disconnecting").into_response()
+}
+
+
+//CRUD BASICS
 pub async fn all_users(Extension(pool): Extension<PgPool>) -> impl IntoResponse {
     match sqlx::query_as::<_, Users>("SELECT * FROM Users")
         .fetch_all(&pool)
@@ -318,8 +355,6 @@ pub async fn all_users(Extension(pool): Extension<PgPool>) -> impl IntoResponse 
         }
     }
 }
-
-//CRUD BASICS
 
 pub async fn one_user(
     Extension(pool): Extension<PgPool>,
