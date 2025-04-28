@@ -169,11 +169,33 @@ pub async fn login(
             Err(e) => (StatusCode::EXPECTATION_FAILED, format!("{}", e)).into_response(),
         };
 
-        return (StatusCode::OK, "yes token connexion wip").into_response();
+        //TODO delete les users sessions pour qu'il ny en ait que 5 par users
+
+        let _user_session = match sqlx::query_as::<_, UsersSession>("DELETE FROM user_sessions
+            WHERE ctid IN (
+            SELECT ctid
+            FROM user_sessions
+            WHERE user_id = $1
+            ORDER BY created_at ASC  -- ou un autre champ temporel que tu utilises
+            OFFSET 5
+            )
+            RETURNING *;
+        ")
+        .bind(user.id)
+        .fetch_one(&pool)
+        .await{
+            Ok(r) => {r},
+            Err(_err) => {
+                println!("error while deleting {:?}", _err);
+                return (StatusCode::FORBIDDEN, "error while deleting".to_string()).into_response();
+            }
+    };
+
+        return (StatusCode::OK, "connexion ok").into_response();
 
     }
 
-    (StatusCode::OK, "no connexion wip").into_response()
+    (StatusCode::OK, "connexion failed").into_response()
 }
 
 pub async fn subscribe(
