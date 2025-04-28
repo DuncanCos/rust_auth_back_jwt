@@ -328,13 +328,48 @@ pub async fn logout(
     headers: HeaderMap,
 ) -> impl IntoResponse {
 
+   
 
     //TODO a finir le logout supprimer de la session + supprimer cookies
-    let refresh_token = jar.clone().get("refresh").unwrap();
-    let auth_token= jar.clone().get("auth").unwrap();
+    let refresh_token = jar.get("refresh").unwrap();
+    let auth_token= jar.get("auth").unwrap();
+
+    let auth_jwt_str = auth_token.value();
+    let refresh_jwt_str = refresh_token.value();
+
+    let auth_jwt = match decode::<Claims>(
+        auth_jwt_str,
+        &DecodingKey::from_secret("secret".as_ref()),
+        &Validation::default(),
+    ){
+        Ok(r)=>r,
+        Err(_err)=> {
+            return (StatusCode::FORBIDDEN, "relog needed 4".to_string()).into_response();
+        } 
+    };
+
+
+    let id_session = auth_jwt.claims.user;
+    let ip = addr.to_string();
+    let user_agent = headers["user-agent"].to_str().unwrap_or_default();
+
+
+    let _user_session = match sqlx::query_as::<_, UsersSession>("DELETE FROM user_sessions  WHERE user_id=$1 AND ip_address=$2 AND user_agent=$3 AND refresh_token=$4 RETURNING *")
+        .bind(id_session)
+        .bind(ip)
+        .bind(user_agent)
+        .bind(refresh_jwt_str)
+        .fetch_one(&pool)
+        .await{
+            Ok(r) => {r},
+            Err(_err) => {
+                println!("error while deleting {:?}", _err);
+                return (StatusCode::FORBIDDEN, "error while deleting".to_string()).into_response();
+            }
+    };
 
     let _ = jar.clone().remove("refresh");
-    let _ = jar.clone().remove("auth");
+    let _ = jar.remove("auth");
     (StatusCode::OK, "disconnected").into_response()
 
     // (StatusCode::EXPECTATION_FAILED, "error while disconnecting").into_response()
