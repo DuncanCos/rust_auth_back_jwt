@@ -4,7 +4,7 @@ use axum::http::StatusCode;
 use axum::{extract, extract::ConnectInfo , extract::Path, response::IntoResponse, Extension, Json, http::header::HeaderMap};
 
 use axum_extra::extract::cookie::CookieJar;
-use tower_cookies;
+use tower_cookies::{self, Cookie};
 
 use std::net::SocketAddr;
 
@@ -368,8 +368,11 @@ pub async fn logout(
             }
     };
 
-    let _ = jar.clone().remove("refresh");
-    let _ = jar.remove("auth");
+
+    cookies.remove(refresh_token.clone().into_owned());
+    cookies.remove(auth_token.clone().into_owned());
+
+
     (StatusCode::OK, "disconnected").into_response()
 
     // (StatusCode::EXPECTATION_FAILED, "error while disconnecting").into_response()
