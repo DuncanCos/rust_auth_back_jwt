@@ -4,9 +4,11 @@ use axum::http::StatusCode;
 use axum::{extract, extract::ConnectInfo , extract::Path, response::IntoResponse, Extension, Json, http::header::HeaderMap};
 
 use axum_extra::extract::cookie::CookieJar;
+use tokio::time::sleep;
 use tower_cookies::{self, Cookie};
 
 use std::net::SocketAddr;
+use std::time::Duration as stdDuration;
 
 use sqlx::postgres::PgPool;
 
@@ -83,6 +85,8 @@ pub async fn login(
     cookies: tower_cookies::Cookies,
     extract::Json(body): extract::Json<LoginUser>,
 ) -> impl IntoResponse {
+
+    let start_time = Utc::now();
 
     if let Some(jar) = jar.get("jwt_token") {
         log::info!("cookie : {}",jar);
@@ -176,7 +180,7 @@ pub async fn login(
             SELECT ctid
             FROM user_sessions
             WHERE user_id = $1
-            ORDER BY created_at ASC  -- ou un autre champ temporel que tu utilises
+            ORDER BY created_at ASC
             OFFSET 5
             )
             RETURNING *;
@@ -350,7 +354,7 @@ pub async fn logout(
     headers: HeaderMap,
 ) -> impl IntoResponse {
 
-   
+    let start_time = Utc::now();
 
     //TODO a finir le logout supprimer de la session + supprimer cookies
     let refresh_token = jar.get("refresh").unwrap();
@@ -394,6 +398,7 @@ pub async fn logout(
     cookies.remove(refresh_token.clone().into_owned());
     cookies.remove(auth_token.clone().into_owned());
 
+    timing_attack_delay(start_time);
 
     (StatusCode::OK, "disconnected").into_response()
 
@@ -487,5 +492,15 @@ pub async fn delete_user(
             let message = "Unable to fetch users".to_string();
             (StatusCode::INTERNAL_SERVER_ERROR, message).into_response()
         }
+    }
+}
+
+
+pub fn timing_attack_delay(start_time: DateTime<Utc>) {
+    let ended_timing = Utc::now();
+    let time_between = ended_timing.signed_duration_since(start_time);
+    if time_between.num_milliseconds() < 750 {
+        let time_remaining = 750 - time_between.num_milliseconds();
+        std::thread::sleep(stdDuration::from_millis(time_remaining as u64));
     }
 }
