@@ -69,6 +69,20 @@ pub async fn get_session() -> impl IntoResponse {
     (StatusCode::ACCEPTED, format!("no session")).into_response()
 }
 
+pub async fn access_pages( jar: CookieJar,) -> impl IntoResponse {
+
+    if let Some(jar) = jar.get("auth") {
+        log::info!("cookie : {}",jar);
+        (StatusCode::ACCEPTED, format!("isok")).into_response()
+        // yes jar
+    }else {
+        //no jar
+        log::info!("no cookie");
+        (StatusCode::NOT_ACCEPTABLE, format!("notoken")).into_response()
+    }
+    
+}
+
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
@@ -79,22 +93,14 @@ struct Claims {
 
 pub async fn login(
     Extension(pool): Extension<PgPool>,
-    jar: CookieJar,
+    _jar: CookieJar,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     cookies: tower_cookies::Cookies,
     extract::Json(body): extract::Json<LoginUser>,
 ) -> impl IntoResponse {
 
-    let start_time = Utc::now();
-
-    if let Some(jar) = jar.get("jwt_token") {
-        log::info!("cookie : {}",jar);
-        // yes jar
-    }else {
-        //no jar
-        log::info!("no cookie");
-    }
+  
 
     let mail = body.mail;
     let password = body.password;
@@ -155,8 +161,28 @@ pub async fn login(
         let refresh_token = encode(&Header::default(), &refresh_claim, &EncodingKey::from_secret("secret".as_ref())).unwrap_or_default();
 
         //creation de cookie de session
-        cookies.add( tower_cookies::Cookie::new("auth", token));
-        cookies.add( tower_cookies::Cookie::new("refresh", refresh_token.clone()));
+
+        let mut auth_cookie = tower_cookies::Cookie::new("auth", token);
+        auth_cookie.set_path("/");
+        auth_cookie.set_secure(false); // mettre true en prod avec HTTPS
+        auth_cookie.set_partitioned(true);
+        
+       auth_cookie.set_same_site(tower_cookies::cookie::SameSite::None);
+
+        auth_cookie.set_http_only(true);
+
+        let mut refresh_cookie = tower_cookies::Cookie::new("refresh", refresh_token.clone());
+        refresh_cookie.set_path("/");
+
+        refresh_cookie.set_secure(false); // mettre true en prod avec HTTPS
+        refresh_cookie.set_partitioned(true);
+       refresh_cookie.set_same_site(tower_cookies::cookie::SameSite::None);
+      
+       refresh_cookie.set_http_only(true);
+
+        cookies.add(auth_cookie );
+
+        cookies.add( refresh_cookie );
       
         match sqlx::query_as::<_, UsersSession>(
             "INSERT INTO user_sessions (user_id, device, ip_address, user_agent, refresh_token, expires_at) VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '7 days')",
@@ -175,27 +201,28 @@ pub async fn login(
 
         //TODO delete les users sessions pour qu'il ny en ait que 5 par users
 
-        let _user_session = match sqlx::query_as::<_, UsersSession>("DELETE FROM user_sessions
-            WHERE ctid IN (
-            SELECT ctid
-            FROM user_sessions
-            WHERE user_id = $1
-            ORDER BY created_at ASC
-            OFFSET 5
-            )
-            RETURNING *;
-        ")
-        .bind(user.id)
-        .fetch_one(&pool)
-        .await{
-            Ok(r) => {r},
-            Err(_err) => {
-                println!("error while deleting {:?}", _err);
-                return (StatusCode::FORBIDDEN, "error while deleting".to_string()).into_response();
-            }
-    };
+    //     match sqlx::query_as::<_, UsersSession>("DELETE FROM user_sessions
+    //         WHERE ctid IN (
+    //         SELECT ctid
+    //         FROM user_sessions
+    //         WHERE user_id = $1
+    //         ORDER BY created_at ASC
+    //         OFFSET 5
+    //         )
+    //         RETURNING *;
+    //     ")
+    //     .bind(user.id)
+    //     .fetch_one(&pool)
+    //     .await{
+    //         Ok(r) => {r},
+    //         Err(_err) => {
+    //             println!("error while deleting {:?}", _err);
+    //             UsersSession::default()
+               
+    //         }
+    // };
 
-        return (StatusCode::OK, "connexion ok").into_response();
+        //return (StatusCode::OK, "connexion ok").into_response();
 
     }
 
