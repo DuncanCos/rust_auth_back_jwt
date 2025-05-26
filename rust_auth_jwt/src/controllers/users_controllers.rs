@@ -1,7 +1,10 @@
 use crate::models::user_model::Users;
 use crate::models::user_session_model::UsersSession;
 use axum::http::StatusCode;
-use axum::{extract, extract::ConnectInfo , extract::Path, response::IntoResponse, Extension, Json, http::header::HeaderMap};
+use axum::{
+    extract, extract::ConnectInfo, extract::Path, http::header::HeaderMap, response::IntoResponse,
+    Extension, Json,
+};
 
 use axum_extra::extract::cookie::CookieJar;
 use tokio::time::sleep;
@@ -17,10 +20,10 @@ use sqlx::FromRow;
 
 use bcrypt::{hash, verify, DEFAULT_COST};
 
-use log::{self, info,error};
+use log::{self, error, info};
 
-use chrono::{prelude::*, Duration,Utc};
-use jsonwebtoken::{encode,decode, Header, EncodingKey, DecodingKey, Validation};
+use chrono::{prelude::*, Duration, Utc};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 
 use uuid::Uuid;
 
@@ -40,7 +43,6 @@ pub struct SubscribeUser {
     password: String,
 }
 
-
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct LoginUser {
     mail: String,
@@ -56,33 +58,26 @@ pub struct BlankUser {
 
 // const COUNTER_KEY: &str = "counter";
 
-
-
 pub async fn test_session() -> impl IntoResponse {
     eprintln!("isok test session");
     (StatusCode::OK, "isok session").into_response()
 }
 
-
-
 pub async fn get_session() -> impl IntoResponse {
     (StatusCode::ACCEPTED, format!("no session")).into_response()
 }
 
-pub async fn access_pages( jar: CookieJar,) -> impl IntoResponse {
-
+pub async fn access_pages(jar: CookieJar) -> impl IntoResponse {
     if let Some(jar) = jar.get("auth") {
-        log::info!("cookie : {}",jar);
+        log::info!("cookie : {}", jar);
         (StatusCode::ACCEPTED, format!("isok")).into_response()
         // yes jar
-    }else {
+    } else {
         //no jar
         log::info!("no cookie");
         (StatusCode::NOT_ACCEPTABLE, format!("notoken")).into_response()
     }
-    
 }
-
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
@@ -99,66 +94,73 @@ pub async fn login(
     cookies: tower_cookies::Cookies,
     extract::Json(body): extract::Json<LoginUser>,
 ) -> impl IntoResponse {
-
-  
-
     let mail = body.mail;
     let password = body.password;
-    let ip = addr.to_string();
+    let ip = addr.ip().to_string();
     let user_agent = headers["user-agent"].clone();
 
-    eprintln!("ip {:?} ua {:?} mail {} pass {}", ip, user_agent, mail, password);
+    eprintln!(
+        "ip {:?} ua {:?} mail {} pass {}",
+        ip, user_agent, mail, password
+    );
 
-    let user = match sqlx::query_as::<_, Users>(
-        "SELECT * FROM users WHERE  mail=$1",
-    )
-    .bind(mail.clone())
-    .fetch_one(&pool)
-    .await
+    let user = match sqlx::query_as::<_, Users>("SELECT * FROM users WHERE  mail=$1")
+        .bind(mail.clone())
+        .fetch_one(&pool)
+        .await
     {
-        Ok(r) => r ,
+        Ok(r) => r,
         Err(e) => {
-            eprintln!("error while fetching db {:?}",e);
+            eprintln!("error while fetching db {:?}", e);
             Users::default()
-            },
+        }
     };
 
     let hash_pass = user.password;
 
-    eprintln!("hash of {} {}",mail ,hash_pass);
+    eprintln!("hash of {} {}", mail, hash_pass);
 
-    let is_valid= match verify(password,&hash_pass){
-        Ok(r) => {r},
+    let is_valid = match verify(password, &hash_pass) {
+        Ok(r) => r,
         Err(_e) => {
             eprintln!("error verify");
-            false}
+            false
+        }
     };
 
     if is_valid {
-
         let test_time = Utc::now() + Duration::minutes(20);
         let convert_time = test_time.timestamp();
-        
+
         let refresh_time = Utc::now() + Duration::days(1);
         let refresh_convert_time = refresh_time.timestamp();
-       
 
-        let new_claim = Claims{
+        let new_claim = Claims {
             user: user.id.clone(),
             company: "autre".to_string(),
-            exp: convert_time as usize 
+            exp: convert_time as usize,
         };
 
         let refresh_token = Uuid::new_v4();
 
-        let refresh_claim = Claims{
+        let refresh_claim = Claims {
             user: user.id.clone(),
             company: refresh_token.to_string(),
-            exp: refresh_convert_time as usize 
+            exp: refresh_convert_time as usize,
         };
 
-        let token = encode(&Header::default(), &new_claim, &EncodingKey::from_secret("secret".as_ref())).unwrap_or_default();
-        let refresh_token = encode(&Header::default(), &refresh_claim, &EncodingKey::from_secret("secret".as_ref())).unwrap_or_default();
+        let token = encode(
+            &Header::default(),
+            &new_claim,
+            &EncodingKey::from_secret("secret".as_ref()),
+        )
+        .unwrap_or_default();
+        let refresh_token = encode(
+            &Header::default(),
+            &refresh_claim,
+            &EncodingKey::from_secret("secret".as_ref()),
+        )
+        .unwrap_or_default();
 
         //creation de cookie de session
 
@@ -166,8 +168,8 @@ pub async fn login(
         auth_cookie.set_path("/");
         auth_cookie.set_secure(false); // mettre true en prod avec HTTPS
         auth_cookie.set_partitioned(true);
-        
-       auth_cookie.set_same_site(tower_cookies::cookie::SameSite::None);
+
+        auth_cookie.set_same_site(tower_cookies::cookie::SameSite::None);
 
         auth_cookie.set_http_only(true);
 
@@ -176,14 +178,14 @@ pub async fn login(
 
         refresh_cookie.set_secure(false); // mettre true en prod avec HTTPS
         refresh_cookie.set_partitioned(true);
-       refresh_cookie.set_same_site(tower_cookies::cookie::SameSite::None);
-      
-       refresh_cookie.set_http_only(true);
+        refresh_cookie.set_same_site(tower_cookies::cookie::SameSite::None);
 
-        cookies.add(auth_cookie );
+        refresh_cookie.set_http_only(true);
 
-        cookies.add( refresh_cookie );
-      
+        cookies.add(auth_cookie);
+
+        cookies.add(refresh_cookie);
+
         match sqlx::query_as::<_, UsersSession>(
             "INSERT INTO user_sessions (user_id, device, ip_address, user_agent, refresh_token, expires_at) VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '7 days')",
         )
@@ -201,32 +203,37 @@ pub async fn login(
 
         //TODO delete les users sessions pour qu'il ny en ait que 5 par users
 
-    //     match sqlx::query_as::<_, UsersSession>("DELETE FROM user_sessions
-    //         WHERE ctid IN (
-    //         SELECT ctid
-    //         FROM user_sessions
-    //         WHERE user_id = $1
-    //         ORDER BY created_at ASC
-    //         OFFSET 5
-    //         )
-    //         RETURNING *;
-    //     ")
-    //     .bind(user.id)
-    //     .fetch_one(&pool)
-    //     .await{
-    //         Ok(r) => {r},
-    //         Err(_err) => {
-    //             println!("error while deleting {:?}", _err);
-    //             UsersSession::default()
-               
-    //         }
-    // };
+        match sqlx::query_as::<_, UsersSession>(
+            "DELETE FROM user_sessions
+                WHERE ctid IN (
+                SELECT ctid
+                FROM user_sessions
+                WHERE user_id = $1
+                ORDER BY created_at ASC
+                OFFSET 5
+                )
+                RETURNING *;
+            ",
+        )
+        .bind(user.id)
+        .fetch_optional(&pool)
+        .await
+        {
+            Ok(Some(session)) => session,
+            Ok(None) => {
+                println!("No old session to delete.");
+                UsersSession::default()
+            }
+            Err(_err) => {
+                println!("Error while deleting: {:?}", _err);
+                UsersSession::default()
+            }
+        };
 
         //return (StatusCode::OK, "connexion ok").into_response();
-
     }
 
-    (StatusCode::OK, "connexion failed").into_response()
+    (StatusCode::OK, "nice cock").into_response()
 }
 
 pub async fn subscribe(
@@ -234,11 +241,10 @@ pub async fn subscribe(
     jar: CookieJar,
     extract::Json(body): extract::Json<SubscribeUser>,
 ) -> impl IntoResponse {
-
     if let Some(jar) = jar.get("jwt_token") {
-        log::info!("cookie : {}",jar);
+        log::info!("cookie : {}", jar);
         // yes jar
-    }else {
+    } else {
         //no jar
         log::info!("no cookie");
     }
@@ -267,28 +273,24 @@ pub async fn refresh_token(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-
     if jar.get("refresh").is_none() {
-        return (
-            StatusCode::UNAUTHORIZED,
-            format!("no coookie")
-        ).into_response();
+        return (StatusCode::UNAUTHORIZED, format!("no coookie")).into_response();
     }
 
-    let refresh_cookie =  jar.get("refresh").unwrap();
+    let refresh_cookie = jar.get("refresh").unwrap();
     let jwt_str = refresh_cookie.value();
 
     let jwt = match decode::<Claims>(
         jwt_str,
         &DecodingKey::from_secret("secret".as_ref()),
         &Validation::default(),
-    ){
-        Ok(r)=>r,
-        Err(_err)=> {
+    ) {
+        Ok(r) => r,
+        Err(_err) => {
             return (StatusCode::FORBIDDEN, "relog needed 4".to_string()).into_response();
-        } 
+        }
     };
-    let ip = addr.to_string();
+    let ip = addr.ip().to_string();
     let user_agent = headers["user-agent"].to_str().unwrap_or_default();
     let refresh_token_str = jwt.claims.company;
     let user_id = jwt.claims.user;
@@ -312,65 +314,69 @@ pub async fn refresh_token(
     let diff = now > session_date_expire;
 
     if diff {
-       
         let user_session_id = user_session.user_id;
-       
-        let refresh_old_time = DateTime::from_timestamp(jwt.claims.exp as i64, 0)
-        .unwrap_or_default();
 
-        let default_time: DateTime<Utc> =  Utc::now();
+        let refresh_old_time =
+            DateTime::from_timestamp(jwt.claims.exp as i64, 0).unwrap_or_default();
 
-        if refresh_old_time == default_time  {
+        let default_time: DateTime<Utc> = Utc::now();
+
+        if refresh_old_time == default_time {
             return (StatusCode::FORBIDDEN, "relog needed 1".to_string()).into_response();
         }
 
-
-        
-        
         let new_delay_utc = Utc::now() + Duration::minutes(20);
         let new_delay_dt = new_delay_utc.timestamp();
 
-        let new_auth_token = Claims{
+        let new_auth_token = Claims {
             user: user_session_id.clone(),
             company: "autre".to_string(),
-            exp: new_delay_dt as usize 
+            exp: new_delay_dt as usize,
         };
 
         let new_refresh_token = Uuid::new_v4();
 
-        let refresh_claim = Claims{
+        let refresh_claim = Claims {
             user: user_session_id.clone(),
             company: new_refresh_token.to_string(),
-            exp: jwt.claims.exp 
+            exp: jwt.claims.exp,
         };
 
-       
-       
-
-        let token = encode(&Header::default(), &new_auth_token, &EncodingKey::from_secret("secret".as_ref())).unwrap_or_default();
-        let refresh_token = encode(&Header::default(), &refresh_claim, &EncodingKey::from_secret("secret".as_ref())).unwrap_or_default();
-        match sqlx::query_as::<_, UsersSession>("UPDATE user_sessions SET refresh_token = $2 WHERE id=$1 ")
+        let token = encode(
+            &Header::default(),
+            &new_auth_token,
+            &EncodingKey::from_secret("secret".as_ref()),
+        )
+        .unwrap_or_default();
+        let refresh_token = encode(
+            &Header::default(),
+            &refresh_claim,
+            &EncodingKey::from_secret("secret".as_ref()),
+        )
+        .unwrap_or_default();
+        match sqlx::query_as::<_, UsersSession>(
+            "UPDATE user_sessions SET refresh_token = $2 WHERE id=$1 ",
+        )
         .bind(user_session_id)
         .bind(refresh_token.clone())
         .fetch_all(&pool)
-        .await{
-            Ok(_r) => {info!("reset ok")},
-            Err(err) => { 
+        .await
+        {
+            Ok(_r) => {
+                info!("reset ok")
+            }
+            Err(err) => {
                 error!("error while recreating auth {:?} {:?}", err, user_id);
                 return (StatusCode::FORBIDDEN, "relog needed 3".to_string()).into_response();
             }
-     };
+        };
         //creation de cookie de session
-        cookies.add( tower_cookies::Cookie::new("auth", token));
-        cookies.add( tower_cookies::Cookie::new("refresh", refresh_token.clone()));
+        cookies.add(tower_cookies::Cookie::new("auth", token));
+        cookies.add(tower_cookies::Cookie::new("refresh", refresh_token.clone()));
         (StatusCode::OK, "token refreshed".to_string()).into_response()
-
-    }else{
-       return (StatusCode::FORBIDDEN, "relog needed 2".to_string()).into_response();
+    } else {
+        return (StatusCode::FORBIDDEN, "relog needed 2".to_string()).into_response();
     }
-   
-
-    
 }
 
 pub async fn logout(
@@ -380,12 +386,11 @@ pub async fn logout(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-
     let start_time = Utc::now();
 
     //TODO a finir le logout supprimer de la session + supprimer cookies
     let refresh_token = jar.get("refresh").unwrap();
-    let auth_token= jar.get("auth").unwrap();
+    let auth_token = jar.get("auth").unwrap();
 
     let auth_jwt_str = auth_token.value();
     let refresh_jwt_str = refresh_token.value();
@@ -394,18 +399,16 @@ pub async fn logout(
         auth_jwt_str,
         &DecodingKey::from_secret("secret".as_ref()),
         &Validation::default(),
-    ){
-        Ok(r)=>r,
-        Err(_err)=> {
-            return (StatusCode::FORBIDDEN, "relog needed 4".to_string()).into_response();
-        } 
+    ) {
+        Ok(r) => r,
+        Err(_err) => {
+            return (StatusCode::FORBIDDEN, "relog needed".to_string()).into_response();
+        }
     };
 
-
     let id_session = auth_jwt.claims.user;
-    let ip = addr.to_string();
+    let ip = addr.ip().to_string();
     let user_agent = headers["user-agent"].to_str().unwrap_or_default();
-
 
     let _user_session = match sqlx::query_as::<_, UsersSession>("DELETE FROM user_sessions  WHERE user_id=$1 AND ip_address=$2 AND user_agent=$3 AND refresh_token=$4 RETURNING *")
         .bind(id_session)
@@ -421,7 +424,6 @@ pub async fn logout(
             }
     };
 
-
     cookies.remove(refresh_token.clone().into_owned());
     cookies.remove(auth_token.clone().into_owned());
 
@@ -432,10 +434,9 @@ pub async fn logout(
     // (StatusCode::EXPECTATION_FAILED, "error while disconnecting").into_response()
 }
 
-
 //CRUD BASICS
 pub async fn all_users(Extension(pool): Extension<PgPool>) -> impl IntoResponse {
-    match sqlx::query_as::<_, Users>("SELECT * FROM Users")
+    match sqlx::query_as::<_, Users>("SELECT * FROM users")
         .fetch_all(&pool)
         .await
     {
@@ -521,7 +522,6 @@ pub async fn delete_user(
         }
     }
 }
-
 
 pub fn timing_attack_delay(start_time: DateTime<Utc>) {
     let ended_timing = Utc::now();

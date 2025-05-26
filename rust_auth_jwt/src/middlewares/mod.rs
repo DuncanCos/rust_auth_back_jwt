@@ -1,11 +1,11 @@
+use axum::extract::ConnectInfo;
 use axum::extract::Request;
+use axum::http::header::HeaderMap;
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::IntoResponse;
-use axum::extract::ConnectInfo;
-use std::net::SocketAddr;
-use axum::http::header::HeaderMap;
 use axum::Extension;
+use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
 
@@ -33,30 +33,34 @@ pub async fn test_middleware(
     let is_valid = true;
 
     if jar.get("auth").is_none() {
-        return (
-            StatusCode::UNAUTHORIZED,
-            format!("no coookie")
-        ).into_response();
+        return (StatusCode::UNAUTHORIZED, format!("no coookie")).into_response();
     }
 
-    let auth_cookie =  jar.get("auth").unwrap();
+    let auth_cookie = jar.get("auth").unwrap();
     let jwt_str = auth_cookie.value();
-    let ip = addr.to_string();
+    let ip = addr.ip().to_string();
     let user_agent = headers["user-agent"].to_str().unwrap_or_default();
 
-    let jwt = decode::<Claims>(
+    let jwt = match decode::<Claims>(
         jwt_str,
         &DecodingKey::from_secret("secret".as_ref()),
         &Validation::default(),
-    )
-    .unwrap();
+    ) {
+        Ok(r) => r,
+        Err(_err) => {
+            return (StatusCode::FORBIDDEN, "relog needed".to_string()).into_response();
+        }
+    };
 
-    eprintln!("mail :  {:?} ip : {:?}, user_agent  {:?}",  jwt.claims.user, ip, user_agent);
+    eprintln!(
+        "mail :  {:?} ip : {:?}, user_agent  {:?}",
+        jwt.claims.user, ip, user_agent
+    );
 
     // lier le user email a l'id qui serra liée au user_id de usersession avec les bonnes info (user agent et ip)
 
     let sql_check = "
-    
+
        SELECT * FROM user_sessions  WHERE user_id = $1  AND user_agent=$2
 
     ";
@@ -67,7 +71,9 @@ pub async fn test_middleware(
         .fetch_one(&pool)
         .await
     {
-        Ok(users) => {eprintln!("{:?}", users)},
+        Ok(users) => {
+            eprintln!("{:?}", users)
+        }
         Err(err) => {
             eprintln!("Database query failed: {:?}", err);
             let message = "Unable to fetch users".to_string();
@@ -75,11 +81,9 @@ pub async fn test_middleware(
         }
     }
 
-
     if is_valid {
         eprintln!("isok go next");
         next.run(req).await
-       
     } else {
         eprintln!("oskour cant go next");
         (
