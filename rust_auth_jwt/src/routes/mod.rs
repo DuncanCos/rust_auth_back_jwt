@@ -1,5 +1,4 @@
 use axum::{
-    routing::{get, post},
     Extension, Router,
 };
 use sqlx::postgres::PgPool;
@@ -10,6 +9,7 @@ use tower_cookies;
 
 mod sessions_routes;
 mod users_routes;
+mod auth_routes;
 
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 
@@ -17,7 +17,6 @@ use tracing::Level;
 
 use axum::middleware;
 
-use crate::controllers::users_controllers;
 
 use crate::middlewares;
 
@@ -30,6 +29,8 @@ pub fn routing(pool: PgPool) -> Router {
         .allow_methods(vec![
             http::Method::GET,
             http::Method::POST,
+            http::Method::PUT,
+            http::Method::DELETE,
             http::Method::OPTIONS,
         ])
         .allow_headers(vec![
@@ -45,12 +46,7 @@ pub fn routing(pool: PgPool) -> Router {
         .nest("/users", users_routes::user_routing())
         .nest("/sessions", sessions_routes::sessions_routing())
         .layer(middleware::from_fn(middlewares::test_middleware))
-        .route("/subscribe", post(users_controllers::subscribe))
-        .route("/login", post(users_controllers::login))
-        .route("/logout", get(users_controllers::logout))
-        .route("/session", get(users_controllers::get_session))
-        .route("/refresh", get(users_controllers::refresh_token))
-        .route("/me", get(users_controllers::access_pages))
+        .nest("/auth", auth_routes::auth_routing())
         .layer(Extension(pool))
         .layer(cors)
         .layer(tower_cookies::CookieManagerLayer::new())

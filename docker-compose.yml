@@ -1,11 +1,12 @@
 services:
   postgres:
-    image: postgres:17.4
+    image: postgres:latest
     container_name: my_postgres_auth_jwt
     environment:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
       POSTGRES_DB: db_name
+      TZ: Europe/Paris
     ports:
       - "5432:5432"
     volumes:

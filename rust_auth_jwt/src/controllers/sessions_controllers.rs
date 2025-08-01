@@ -2,15 +2,11 @@ use crate::models::user_model::Users;
 use crate::models::user_session_model::UsersSession;
 use axum::http::StatusCode;
 use axum::{
-    extract, extract::ConnectInfo, extract::Path, http::header::HeaderMap, response::IntoResponse,
+    extract,  extract::Path, response::IntoResponse,
     Extension, Json,
 };
 
-use axum_extra::extract::cookie::CookieJar;
-use tokio::time::sleep;
-use tower_cookies::{self, Cookie};
 
-use std::net::SocketAddr;
 use std::time::Duration as stdDuration;
 
 use sqlx::postgres::PgPool;
@@ -18,14 +14,9 @@ use sqlx::postgres::PgPool;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-use bcrypt::{hash, verify, DEFAULT_COST};
 
-use log::{self, error, info};
 
-use chrono::{prelude::*, Duration, Utc};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
-
-use uuid::Uuid;
+use chrono::{prelude::*, Utc};
 
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct Body {
@@ -56,7 +47,7 @@ pub async fn delete_sessions(
     Extension(pool): Extension<PgPool>,
     Path(id): extract::Path<i32>,
 ) -> impl IntoResponse {
-    match sqlx::query_as::<_, Users>("DELETE FROM user_session  WHERE id = $1")
+    match sqlx::query_as::<_, Users>("DELETE FROM user_sessions  WHERE id = $1")
         .bind(id)
         .fetch_all(&pool)
         .await

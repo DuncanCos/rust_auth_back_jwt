@@ -11,10 +11,10 @@ use tracing::Level;
 use std::net::SocketAddr;
 
 #[tokio::main]
-async fn main() {
+async fn main()  {
     println!("Hello, world!");
 
-    env_logger::init();
+   
 
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::INFO)
