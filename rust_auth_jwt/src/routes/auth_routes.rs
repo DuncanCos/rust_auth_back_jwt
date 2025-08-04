@@ -12,7 +12,7 @@ pub fn auth_routing() -> Router {
     .route("/logout", get(auth_controllers::logout))
     .route("/session", get(auth_controllers::get_session))
     .route("/refresh", get(auth_controllers::refresh_token))
-    .route("/finalize/{id}", get(auth_controllers::finalise_subscribe))
+    .route("/finalize/{uuid}", get(auth_controllers::finalise_subscribe))
     .route("/me", get(auth_controllers::access_pages));
     app
 }

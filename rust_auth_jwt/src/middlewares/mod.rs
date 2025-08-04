@@ -11,7 +11,7 @@ use tower_cookies::{self, Cookie};
 use serde::{Deserialize, Serialize};
 
 use axum_extra::extract::cookie::CookieJar;
-use jsonwebtoken::{decode, DecodingKey, Validation};
+use jsonwebtoken::{decode, DecodingKey, Validation,Algorithm};
 use sqlx::postgres::PgPool;
 
 use crate::models::user_session_model::UsersSession;
@@ -32,8 +32,8 @@ pub async fn test_middleware(
     req: Request,
     next: Next,
 ) -> impl IntoResponse {
-    let is_valid = true;
 
+        // recuperer les 2 cookie  auth et refresh et les met en &str
     if jar.get("auth").is_none() {
         return (StatusCode::UNAUTHORIZED, format!("no cookie")).into_response();
     }
@@ -47,13 +47,22 @@ pub async fn test_middleware(
     let refresh_cookie = jar.get("refresh").unwrap();
     let refrsh_jwt_str = refresh_cookie.value();
 
+
+
+    //recupere ip et user agent
+
     let ip = addr.ip().to_string();
     let user_agent = headers["user-agent"].to_str().unwrap_or_default();
+
+
+    // est cence verifier si le auth et ok sinon il verifie si le refresh et ok sinon il reset les cookie et demande a faire un relog
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.validate_exp = true;
 
     let jwt = match decode::<Claims>(
         auth_jwt_str,
         &DecodingKey::from_secret("secret".as_ref()),
-        &Validation::default(),
+        &validation,
     ) {
         Ok(r) => r,
         Err(_err) => {
@@ -61,7 +70,7 @@ pub async fn test_middleware(
             match decode::<Claims>(
                 refrsh_jwt_str,
                 &DecodingKey::from_secret("secret".as_ref()),
-                &Validation::default(),
+                &validation,
             ) {
                 Ok(_r) => {
                     return (StatusCode::FORBIDDEN, "refresh needed".to_string()).into_response();
@@ -93,12 +102,6 @@ pub async fn test_middleware(
             //return (StatusCode::FORBIDDEN, "relog needed".to_string()).into_response();
         }
     };
-
-    eprintln!(
-        "mail :  {:?} ip : {:?}, user_agent  {:?}",
-        jwt.claims.user, ip, user_agent
-    );
-
     // lier le user email a l'id qui serra liée au user_id de usersession avec les bonnes info (user agent et ip)
 
     let sql_check = "
@@ -115,24 +118,15 @@ pub async fn test_middleware(
         .await
     {
         Ok(users) => {
-            eprintln!("{:?}", users)
+            // eprintln!("{:?}", users)
         }
         Err(err) => {
-            eprintln!("Database query failed: {:?}", err);
+            // eprintln!("Database query failed: {:?}", err);
             let message = "Unable to fetch users middleware".to_string();
             return (StatusCode::INTERNAL_SERVER_ERROR, message).into_response();
         }
     }
 
-    if is_valid {
         eprintln!("isok go next");
         next.run(req).await
-    } else {
-        eprintln!("oskour cant go next");
-        (
-            StatusCode::UNAUTHORIZED,
-            format!("not connected middleware"),
-        )
-            .into_response()
-    }
 }

@@ -1,6 +1,6 @@
-use crate::models::user_model::Users;
+use crate::models::user_model::{Users, UsersLoginReturn};
 use crate::models::user_session_model::UsersSession;
-use axum::body;
+// use axum::body;
 use axum::http::StatusCode;
 use axum::{
     extract, extract::ConnectInfo, extract::Path, http::header::HeaderMap, response::IntoResponse,
@@ -8,9 +8,8 @@ use axum::{
 };
 
 use axum_extra::extract::cookie::CookieJar;
-use tokio::time::sleep;
+// use tokio::time::sleep;
 use tower_cookies::{self, Cookie};
-
 
 use std::net::SocketAddr;
 use std::time::Duration as stdDuration;
@@ -26,7 +25,7 @@ use bcrypt::{hash, verify, DEFAULT_COST};
 use log::{self, error, info};
 
 use chrono::{prelude::*, Duration, Utc};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation, Algorithm};
 
 use uuid::Uuid;
 
@@ -58,8 +57,14 @@ pub async fn get_session() -> impl IntoResponse {
     (StatusCode::ACCEPTED, format!("no session")).into_response()
 }
 
-pub async fn access_pages(jar: CookieJar, cookies: tower_cookies::Cookies) -> impl IntoResponse {
+pub async fn access_pages(
+    jar: CookieJar,
+    cookies: tower_cookies::Cookies,
+    Extension(pool): Extension<PgPool>,
+) -> impl IntoResponse {
     log::info!("coocou");
+
+    //recupere le refresh token
     if jar.get("refresh").is_none() {
         return (StatusCode::UNAUTHORIZED, format!("no cookie")).into_response();
     }
@@ -68,29 +73,39 @@ pub async fn access_pages(jar: CookieJar, cookies: tower_cookies::Cookies) -> im
     let refrsh_jwt_str = refresh_cookie.value();
 
 
+    //recupere le cookie auth
     if let Some(jar) = jar.get("auth") {
         log::info!("cookie : {}", jar);
+
+        let mut validation = Validation::new(Algorithm::HS256);
+        validation.validate_exp = true;
+
+        //valide le cookie auth
         let jwt_str = jar.value();
-        let _jwt = match decode::<Claims>(
+        let jwt = match decode::<Claims>(
             jwt_str,
             &DecodingKey::from_secret("secret".as_ref()),
-            &Validation::default(),
+            &validation,
         ) {
-            Ok(r) => r,
+            Ok(r) => {
+                // eprintln!("valid token /me");
+                r},
             Err(_err) => {
-                // Supprime le cookie "refresh"
-
+               
+                // check if refresh is valid si cest valide on dit juste quon a besoin dun refresh sinon on resets les 2 cookies 
                 match decode::<Claims>(
                     refrsh_jwt_str,
                     &DecodingKey::from_secret("secret".as_ref()),
                     &Validation::default(),
                 ) {
                     Ok(_r) => {
-                        return (StatusCode::FORBIDDEN, "refresh needed".to_string()).into_response();
+                        return (StatusCode::FORBIDDEN, "refresh needed".to_string())
+                            .into_response();
                     }
                     Err(_err) => {
-                        // check if refresh is valid
-    
+                       
+                         // Supprime le cookie "refresh"
+
                         let mut expired_refresh = Cookie::new("refresh", "");
                         expired_refresh.set_path("/");
                         expired_refresh.set_http_only(true);
@@ -115,7 +130,34 @@ pub async fn access_pages(jar: CookieJar, cookies: tower_cookies::Cookies) -> im
                 //return (StatusCode::FORBIDDEN, "relog needed".to_string()).into_response();
             }
         };
-        (StatusCode::ACCEPTED, format!("isok")).into_response()
+
+
+        //recupere le user et le return
+        let user = match sqlx::query_as::<_, Users>("SELECT * FROM users WHERE  id=$1")
+            .bind(jwt.claims.user)
+            .fetch_one(&pool)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                // eprintln!("error while fetching db {:?}", e);
+                return (
+                    StatusCode::EXPECTATION_FAILED,
+                    format!("error while fetching db {:?}", e),
+                )
+                    .into_response();
+                // Users::default()
+            }
+        };
+
+        let users_return = UsersLoginReturn {
+            username: user.username,
+            mail: user.mail,
+            roles: user.roles,
+        };
+        (StatusCode::OK, Json(users_return)).into_response()
+
+        // (StatusCode::ACCEPTED, format!("isok")).into_response()
         // yes jar
     } else {
         //no jar
@@ -157,8 +199,12 @@ pub async fn login(
         Ok(r) => r,
         Err(e) => {
             eprintln!("error while fetching db {:?}", e);
-            return (StatusCode::EXPECTATION_FAILED, format!("error while fetching db {:?}", e)).into_response();
-           // Users::default()
+            return (
+                StatusCode::EXPECTATION_FAILED,
+                format!("error while fetching db {:?}", e),
+            )
+                .into_response();
+            // Users::default()
         }
     };
 
@@ -175,7 +221,7 @@ pub async fn login(
     };
 
     if is_valid {
-        let test_time = Utc::now() + Duration::minutes(2);
+        let test_time = Utc::now() + Duration::minutes(1);
         let convert_time = test_time.timestamp();
         eprintln!("test time {:?}", test_time);
 
@@ -233,10 +279,13 @@ pub async fn login(
 
         cookies.add(refresh_cookie);
 
+        let uuid = Uuid::new_v4();
+
         match sqlx::query_as::<_, UsersSession>(
-            "INSERT INTO user_sessions (user_id, device, ip_address, user_agent, refresh_token, expires_at) VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '7 days')",
+            "INSERT INTO user_sessions (user_id,uuid, device, ip_address, user_agent, refresh_token, expires_at) VALUES ($1, $2, $3, $4, $5, $6, NOW() + INTERVAL '7 days')",
         )
         .bind(user.id)
+        .bind(uuid)
         .bind("nonedevice")
         .bind(ip)
         .bind(user_agent.to_str().unwrap_or_default())
@@ -277,7 +326,12 @@ pub async fn login(
             }
         };
 
-        return (StatusCode::OK, "connexion ok").into_response();
+        let users_return = UsersLoginReturn {
+            username: user.username,
+            mail: user.mail,
+            roles: user.roles,
+        };
+        return (StatusCode::OK, Json(users_return)).into_response();
     }
 
     (StatusCode::EXPECTATION_FAILED, "nice request").into_response()
@@ -298,18 +352,21 @@ pub async fn subscribe(
 
     //todo check if user already exists
 
-    let exists: bool =
-        match sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE mail = $1)")
-            .bind(&body.mail)
-            .fetch_one(&pool)
-            .await
-        {
-            Ok(exists) => exists,
-            Err(e) => {
-                eprintln!("Erreur SQLX: {:?}", e);
-                return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
-            }
-        };
+    let exists: bool = match sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE mail = $1)  AS exists",
+    )
+    .bind(&body.mail)
+    .fetch_one(&pool)
+    .await
+    {
+        Ok(exists) => exists,
+        Err(e) => {
+            eprintln!("Erreur SQLX: {:?}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
+        }
+    };
+
+    eprintln!("{}", exists);
 
     if exists {
         return (StatusCode::CONFLICT, "User already exists").into_response();
@@ -318,32 +375,38 @@ pub async fn subscribe(
     let hashed_password = hash(body.password, DEFAULT_COST).unwrap_or("notapass".to_string());
     let _info = format!("{} {} {}", body.username, body.mail, hashed_password);
 
+    let uuid = Uuid::new_v4();
     match sqlx::query_as::<_, Users>(
-        "INSERT INTO Users (username, mail, password) VALUES ($1,$2,$3)",
+        "INSERT INTO Users (username, uuid, mail, password) VALUES ($1,$2,$3,$4) RETURNING *",
     )
     .bind(body.username)
+    .bind(uuid)
     .bind(body.mail.clone())
     .bind(hashed_password)
     .fetch_one(&pool)
-    .await 
+    .await
     {
         Ok(r) => {
             //todo send email to user
 
-            let email = match build_email(body.mail.as_str(),build_email_html(r.mail.clone(), r.id).as_str()) {
+            let email = match build_email(
+                body.mail.as_str(),
+                build_email_html(r.mail.clone(), r.uuid).as_str(),
+            ) {
                 Ok(msg) => msg,
                 Err(e) => {
-                    let body = json!({"error": format!("Erreur de construction de l'email : {}", e)});
+                    let body =
+                        json!({"error": format!("Erreur de construction de l'email : {}", e)});
                     return (StatusCode::BAD_REQUEST, Json(body)).into_response();
                 }
             };
-        
-            // Config SMTP 
+
+            // Config SMTP
             let creds = Credentials::new(
-                "gunner.harris25@ethereal.email".to_string(),
-                "cPCgPbFGNfc1EypESW".to_string(),
+                "lexus10@ethereal.email".to_string(),
+                "dtjfRJAbrSKq7YeKEj".to_string(),
             );
-        
+
             let mailer = match SmtpTransport::starttls_relay("smtp.ethereal.email") {
                 Ok(builder) => builder.port(587).credentials(creds).build(),
                 Err(e) => {
@@ -351,7 +414,6 @@ pub async fn subscribe(
                     return (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response();
                 }
             };
-
 
             // Envoiement de l'email
 
@@ -365,15 +427,13 @@ pub async fn subscribe(
                     (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
                 }
             }
-
-            
         }
         Err(e) => (StatusCode::EXPECTATION_FAILED, format!("{}", e)).into_response(),
     }
 }
 
 fn build_email(destinataire: &str, body: &str) -> Result<Message, String> {
-    let from_address: Mailbox = "bernhard.trantow@ethereal.email"
+    let from_address: Mailbox = "lexus10@ethereal.email"
         .parse()
         .map_err(|e| format!("Erreur d'adresse d'expéditeur: {}", e))?;
 
@@ -390,7 +450,7 @@ fn build_email(destinataire: &str, body: &str) -> Result<Message, String> {
         .map_err(|e| format!("Erreur lors de la construction du message: {}", e))
 }
 
-fn build_email_html(destinataire: String, id_destinataire: i32) -> String {
+fn build_email_html(destinataire: String, id_destinataire: Uuid) -> String {
     let confirmation_url = format!("http://localhost:5173/auth/{}", id_destinataire);
 
     let mail = format!(
@@ -414,10 +474,9 @@ fn build_email_html(destinataire: String, id_destinataire: i32) -> String {
     mail
 }
 
-
 pub async fn finalise_subscribe(
     Extension(pool): Extension<PgPool>,
-    extract::Path(id): extract::Path<i32>,
+    extract::Path(uuid): extract::Path<Uuid>,
     jar: CookieJar,
     extract::Json(body): extract::Json<BlankUser>,
 ) -> impl IntoResponse {
@@ -432,13 +491,11 @@ pub async fn finalise_subscribe(
     let hashed_password = hash(body.password, DEFAULT_COST).unwrap_or("notapass".to_string());
     let _info = format!("{} {} {}", body.username, body.mail, hashed_password);
 
-    match sqlx::query_as::<_, Users>(
-        "UPDATE Users SET password = $3 WHERE id = $4",
-    )
-    .bind(hashed_password)
-    .bind(id)
-    .fetch_one(&pool)
-    .await
+    match sqlx::query_as::<_, Users>("UPDATE Users SET password = $3 WHERE uuid = $4")
+        .bind(hashed_password)
+        .bind(uuid)
+        .fetch_one(&pool)
+        .await
     {
         Ok(r) => (StatusCode::CREATED, format!("{:?}", r)).into_response(),
         Err(e) => (StatusCode::EXPECTATION_FAILED, format!("{}", e)).into_response(),
@@ -457,48 +514,63 @@ pub async fn refresh_token(
     }
 
     let refresh_cookie = jar.get("refresh").unwrap();
-    let jwt_str = refresh_cookie.value();
+    let refresh_jwt_str = refresh_cookie.value();
 
-    let jwt = match decode::<Claims>(
-        jwt_str,
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.validate_exp = true;
+
+    let jwt: jsonwebtoken::TokenData<Claims> = match decode::<Claims>(
+        refresh_jwt_str,
         &DecodingKey::from_secret("secret".as_ref()),
-        &Validation::default(),
+        &validation,
     ) {
         Ok(r) => r,
         Err(_err) => {
             return (StatusCode::FORBIDDEN, "relog needed".to_string()).into_response();
         }
     };
-    // jwt en string
-    
+
+    //permet de valider le refresh token
+
+
+    // prend lip et le useragent puis fait une verification dans la db
+
     let ip = addr.ip().to_string();
     let user_agent = headers["user-agent"].to_str().unwrap_or_default();
-    //let refresh_token_str = jwt.claims.company;
     let user_id = jwt.claims.user;
-    println!("user id : {:?} ip add {:?} user_agent: {:?} refresh_token: {:?}", user_id, ip, user_agent, jwt);
+    println!(
+        "user id : {:?} ip add {:?} user_agent: {:?} refresh_token: {:?}",
+        user_id,
+        ip,
+        user_agent,
+        refresh_jwt_str.to_string()
+    );
 
     let user_session = match sqlx::query_as::<_, UsersSession>("SELECT * FROM user_sessions  WHERE user_id=$1 AND ip_address=$2 AND user_agent=$3 AND refresh_token=$4  ")
         .bind(user_id)
         .bind(ip)
         .bind(user_agent)
-        .bind(jwt_str.to_string())
+        .bind(refresh_jwt_str.to_string())
         .fetch_one(&pool)
         .await{
             Ok(r) => {r},
-            Err(e) => { return (StatusCode::EXPECTATION_FAILED, format!("error while fetching db while getting usersession  {:?}", e)).into_response();}
+            Err(e) => { return (StatusCode::EXPECTATION_FAILED, format!("error while fetching usersession on refresh full get db while getting usersession  {:?}", e)).into_response();}
     };
 
+    // fait une verif de la validiter total du refresh (on continue ou on login)
 
+    //verification dans la db
     let session_date_expire = user_session.expires_at;
 
     let now = Utc::now().naive_utc();
 
     let diff = now > session_date_expire;
 
-
     if !diff {
         let user_session_id = user_session.user_id;
+        let user_session_real_id = user_session.id;
 
+        //verification dans le jwt (wtf a retirer)
         let refresh_old_time =
             DateTime::from_timestamp(jwt.claims.exp as i64, 0).unwrap_or_default();
 
@@ -508,9 +580,11 @@ pub async fn refresh_token(
             return (StatusCode::FORBIDDEN, "relog needed".to_string()).into_response();
         }
 
-        let new_delay_utc = Utc::now() + Duration::minutes(20);
+        //creer un nouveau delay
+        let new_delay_utc = Utc::now() + Duration::minutes(1);
         let new_delay_dt = new_delay_utc.timestamp();
 
+        //creation de nouveau claims (contenu des token) pour le auth et le refresh
         let new_auth_token = Claims {
             user: user_session_id.clone(),
             company: "autre".to_string(),
@@ -525,6 +599,7 @@ pub async fn refresh_token(
             exp: jwt.claims.exp,
         };
 
+        //creation des token et refresh token (jwt en string avec le contenue des claims)
         let token = encode(
             &Header::default(),
             &new_auth_token,
@@ -537,46 +612,76 @@ pub async fn refresh_token(
             &EncodingKey::from_secret("secret".as_ref()),
         )
         .unwrap_or_default();
+
+        println!(
+            "new refresh_token: {:?}",
+            refresh_token.clone()
+        );
+
+    
+        //insertion du nouveau jwt refresh dans pour le remplacement
         match sqlx::query_as::<_, UsersSession>(
             "UPDATE user_sessions SET refresh_token = $2 WHERE id=$1 ",
         )
-        .bind(user_session_id)
+        .bind(user_session_real_id)
         .bind(refresh_token.clone())
         .fetch_all(&pool)
         .await
         {
             Ok(_r) => {
+                eprintln!("reset ok");
                 info!("reset ok")
             }
             Err(err) => {
+                eprintln!("error while recreating auth {:?} {:?}", err, user_id);
                 error!("error while recreating auth {:?} {:?}", err, user_id);
                 return (StatusCode::FORBIDDEN, "relog needed".to_string()).into_response();
             }
         };
 
-        
+        //creation des nouveau cookies
         let mut auth_cookie = tower_cookies::Cookie::new("auth", token);
         auth_cookie.set_path("/");
         auth_cookie.set_secure(false); // mettre true en prod avec HTTPS
         auth_cookie.set_partitioned(true);
-
         auth_cookie.set_same_site(tower_cookies::cookie::SameSite::None);
-
         auth_cookie.set_http_only(true);
 
         let mut refresh_cookie = tower_cookies::Cookie::new("refresh", refresh_token.clone());
         refresh_cookie.set_path("/");
-
         refresh_cookie.set_secure(false); // mettre true en prod avec HTTPS
         refresh_cookie.set_partitioned(true);
         refresh_cookie.set_same_site(tower_cookies::cookie::SameSite::None);
-
         refresh_cookie.set_http_only(true);
 
         cookies.add(auth_cookie);
-
         cookies.add(refresh_cookie);
-        (StatusCode::OK, "token refreshed".to_string()).into_response()
+
+
+        //recuperation des info du users pour le returned
+        let user = match sqlx::query_as::<_, Users>("SELECT * FROM users WHERE  id=$1")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("error while fetching db {:?}", e);
+                return (
+                    StatusCode::EXPECTATION_FAILED,
+                    format!("error while fetching db {:?}", e),
+                )
+                    .into_response();
+                // Users::default()
+            }
+        };
+
+        let users_return = UsersLoginReturn {
+            username: user.username,
+            mail: user.mail,
+            roles: user.roles,
+        };
+        (StatusCode::OK, Json(users_return)).into_response()
     } else {
         return (StatusCode::FORBIDDEN, "relog needed".to_string()).into_response();
     }
@@ -672,4 +777,3 @@ pub fn timing_attack_delay(start_time: DateTime<Utc>) {
         std::thread::sleep(stdDuration::from_millis(time_remaining as u64));
     }
 }
-
