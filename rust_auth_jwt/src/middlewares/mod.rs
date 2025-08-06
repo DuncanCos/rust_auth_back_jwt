@@ -117,10 +117,10 @@ pub async fn test_middleware(
         .fetch_one(&pool)
         .await
     {
-        Ok(users) => {
+        Ok(_users) => {
             // eprintln!("{:?}", users)
         }
-        Err(err) => {
+        Err(_err) => {
             // eprintln!("Database query failed: {:?}", err);
             let message = "Unable to fetch users middleware".to_string();
             return (StatusCode::INTERNAL_SERVER_ERROR, message).into_response();

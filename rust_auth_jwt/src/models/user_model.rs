@@ -8,7 +8,6 @@ pub struct Users {
     pub id: i32,
     pub uuid: Uuid,
     pub roles: String,
-    pub username: String,
     pub mail: String,
     pub password: String,
     pub created_at: chrono::NaiveDateTime,
@@ -17,6 +16,5 @@ pub struct Users {
 #[derive(Serialize, Deserialize, Debug, FromRow, Default)]
 pub struct UsersLoginReturn {
     pub roles: String,
-    pub username: String,
     pub mail: String,
 }

@@ -3,7 +3,7 @@ use crate::models::user_session_model::UsersSession;
 // use axum::body;
 use axum::http::StatusCode;
 use axum::{
-    extract, extract::ConnectInfo, extract::Path, http::header::HeaderMap, response::IntoResponse,
+    extract, extract::ConnectInfo, http::header::HeaderMap, response::IntoResponse,
     Extension, Json,
 };
 
@@ -29,7 +29,7 @@ use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation,
 
 use uuid::Uuid;
 
-use lettre::message::{header, Mailbox, Message};
+use lettre::message::{Mailbox, Message};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{SmtpTransport, Transport};
 
@@ -151,7 +151,6 @@ pub async fn access_pages(
         };
 
         let users_return = UsersLoginReturn {
-            username: user.username,
             mail: user.mail,
             roles: user.roles,
         };
@@ -327,7 +326,6 @@ pub async fn login(
         };
 
         let users_return = UsersLoginReturn {
-            username: user.username,
             mail: user.mail,
             roles: user.roles,
         };
@@ -377,9 +375,8 @@ pub async fn subscribe(
 
     let uuid = Uuid::new_v4();
     match sqlx::query_as::<_, Users>(
-        "INSERT INTO Users (username, uuid, mail, password) VALUES ($1,$2,$3,$4) RETURNING *",
+        "INSERT INTO Users ( uuid, mail, password) VALUES ($1,$2,$3) RETURNING *",
     )
-    .bind(body.username)
     .bind(uuid)
     .bind(body.mail.clone())
     .bind(hashed_password)
@@ -419,7 +416,7 @@ pub async fn subscribe(
 
             match mailer.send(&email) {
                 Ok(_) => {
-                    let body = json!({"message": "Email envoyé avec succès"});
+                    let _body = json!({"message": "Email envoyé avec succès"});
                     (StatusCode::CREATED, format!("{:?}", r)).into_response()
                 }
                 Err(e) => {
@@ -677,7 +674,6 @@ pub async fn refresh_token(
         };
 
         let users_return = UsersLoginReturn {
-            username: user.username,
             mail: user.mail,
             roles: user.roles,
         };
