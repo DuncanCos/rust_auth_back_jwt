@@ -8,20 +8,11 @@ use axum::Extension;
 use std::net::SocketAddr;
 use tower_cookies::{self, Cookie};
 
-use serde::{Deserialize, Serialize};
-
 use axum_extra::extract::cookie::CookieJar;
-use jsonwebtoken::{decode, DecodingKey, Validation,Algorithm};
+use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use sqlx::postgres::PgPool;
 
-use crate::models::user_session_model::UsersSession;
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Claims {
-    user: i32,
-    company: String,
-    exp: usize,
-}
+use crate::models::user_session_model::{Claims, RefreshClaims, UsersSession};
 
 pub async fn test_middleware(
     Extension(pool): Extension<PgPool>,
@@ -32,8 +23,7 @@ pub async fn test_middleware(
     req: Request,
     next: Next,
 ) -> impl IntoResponse {
-
-        // recuperer les 2 cookie  auth et refresh et les met en &str
+    // recuperer les 2 cookie  auth et refresh et les met en &str
     if jar.get("auth").is_none() {
         return (StatusCode::UNAUTHORIZED, format!("no cookie")).into_response();
     }
@@ -47,13 +37,10 @@ pub async fn test_middleware(
     let refresh_cookie = jar.get("refresh").unwrap();
     let refrsh_jwt_str = refresh_cookie.value();
 
-
-
     //recupere ip et user agent
 
     let ip = addr.ip().to_string();
     let user_agent = headers["user-agent"].to_str().unwrap_or_default();
-
 
     // est cence verifier si le auth et ok sinon il verifie si le refresh et ok sinon il reset les cookie et demande a faire un relog
     let mut validation = Validation::new(Algorithm::HS256);
@@ -67,7 +54,7 @@ pub async fn test_middleware(
         Ok(r) => r,
         Err(_err) => {
             // check if refresh is valid
-            match decode::<Claims>(
+            match decode::<RefreshClaims>(
                 refrsh_jwt_str,
                 &DecodingKey::from_secret("secret".as_ref()),
                 &validation,
@@ -75,8 +62,9 @@ pub async fn test_middleware(
                 Ok(_r) => {
                     return (StatusCode::FORBIDDEN, "refresh needed".to_string()).into_response();
                 }
-                Err(_err) => {
+                Err(err) => {
                     // check if refresh is valid
+                    eprintln!("erorr middleware {:?}", err);
 
                     let mut expired_refresh = Cookie::new("refresh", "");
                     expired_refresh.set_path("/");
@@ -106,7 +94,7 @@ pub async fn test_middleware(
 
     let sql_check = "
 
-       SELECT * FROM user_sessions  WHERE user_id = $1  AND user_agent=$2 AND ip_address = $3
+       SELECT * FROM user_sessions  WHERE user_uuid = $1  AND user_agent=$2 AND ip_address = $3
 
     ";
 
@@ -127,6 +115,6 @@ pub async fn test_middleware(
         }
     }
 
-        eprintln!("isok go next");
-        next.run(req).await
+    eprintln!("isok go next");
+    next.run(req).await
 }
