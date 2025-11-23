@@ -7,15 +7,15 @@ mod routes;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
-use dotenv;
+use dotenvy;
 use std::net::SocketAddr;
 
 #[tokio::main]
 
 async fn main() {
-    dotenv::dotenv().ok();
-    let _testingenv: String = dotenv::var("TEST").unwrap();
-    let dbconnection: String = dotenv::var("DB_CONNECTION").unwrap();
+    dotenvy::dotenv().ok();
+    let _testingenv: String = dotenvy::var("TEST").unwrap();
+    let dbconnection: String = dotenvy::var("DB_CONNECTION").unwrap();
     println!("Hello, world!");
 
     let subscriber = FmtSubscriber::builder()

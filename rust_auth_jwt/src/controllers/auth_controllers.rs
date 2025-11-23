@@ -26,26 +26,10 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 
 use uuid::Uuid;
 
-use dotenv;
+use dotenvy;
 use lettre::message::{Mailbox, Message};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{SmtpTransport, Transport};
-
-// #[derive(Debug, FromRow, Serialize, Deserialize)]
-// pub struct SubscribeUser {
-//     mail: String,
-// }
-
-// #[derive(Debug, FromRow, Serialize, Deserialize)]
-// pub struct LoginUser {
-//     mail: String,
-//     password: String,
-// }
-
-// #[derive(Debug, FromRow, Serialize, Deserialize)]
-// pub struct BlankUser {
-//     password: String,
-// }
 
 pub async fn get_session() -> impl IntoResponse {
     (StatusCode::ACCEPTED, format!("no session")).into_response()
@@ -131,13 +115,11 @@ pub async fn access_pages(
         {
             Ok(r) => r,
             Err(e) => {
-                // eprintln!("error while fetching db {:?}", e);
                 return (
                     StatusCode::EXPECTATION_FAILED,
                     format!("error while fetching db {:?}", e),
                 )
                     .into_response();
-                // Users::default()
             }
         };
 
@@ -146,33 +128,14 @@ pub async fn access_pages(
             roles: user.roles,
         };
         (StatusCode::OK, Json(users_return)).into_response()
-
-        // (StatusCode::ACCEPTED, format!("isok")).into_response()
-        // yes jar
     } else {
-        //no jar
         log::info!("no cookie");
         (StatusCode::NOT_ACCEPTABLE, format!("no cookie")).into_response()
     }
 }
 
-// #[derive(Debug, Serialize, Deserialize)]
-// struct Claims {
-//     user: Uuid,
-//     roles: String,
-//     exp: usize,
-// }
-
-// #[derive(Debug, Serialize, Deserialize)]
-// struct RefreshClaims {
-//     user: Uuid,
-//     token: String,
-//     exp: usize,
-// }
-
 pub async fn login(
     Extension(pool): Extension<PgPool>,
-    _jar: CookieJar,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     cookies: tower_cookies::Cookies,
@@ -182,11 +145,6 @@ pub async fn login(
     let password = body.password;
     let ip = addr.ip().to_string();
     let user_agent = headers["user-agent"].clone();
-
-    eprintln!(
-        "ip {:?} ua {:?} mail {} pass {}",
-        ip, user_agent, mail, password
-    );
 
     let user = match sqlx::query_as::<_, Users>("SELECT * FROM users WHERE  mail=$1")
         .bind(mail.clone())
@@ -207,8 +165,6 @@ pub async fn login(
 
     let hash_pass = user.password;
 
-    eprintln!("hash of {} {}", mail, hash_pass);
-
     let is_valid = match verify(password, &hash_pass) {
         Ok(r) => r,
         Err(_e) => {
@@ -220,14 +176,13 @@ pub async fn login(
     if is_valid {
         let test_time = Utc::now() + Duration::minutes(1);
         let convert_time = test_time.timestamp();
-        eprintln!("test time {:?}", test_time);
 
         let refresh_time = Utc::now() + Duration::days(1);
         let refresh_convert_time = refresh_time.timestamp();
 
         let new_claim = Claims {
             user: user.uuid.clone(),
-            roles: "autre".to_string(),
+            roles: user.roles.clone(),
             exp: convert_time as usize,
         };
 
@@ -336,7 +291,6 @@ pub async fn login(
 
 pub async fn subscribe(
     Extension(pool): Extension<PgPool>,
-    _jar: CookieJar,
     extract::Json(body): extract::Json<SubscribeUser>,
 ) -> impl IntoResponse {
     //todo check if user already exists
@@ -354,8 +308,6 @@ pub async fn subscribe(
             return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
         }
     };
-
-    eprintln!("{}", exists);
 
     if exists {
         return (StatusCode::CONFLICT, "User already exists").into_response();
@@ -383,8 +335,8 @@ pub async fn subscribe(
                 }
             };
 
-            let smtp_mail: String = dotenv::var("SMTPMAIL").unwrap();
-            let smtp_pass: String = dotenv::var("SMTPCRED").unwrap();
+            let smtp_mail: String = dotenvy::var("SMTPMAIL").unwrap();
+            let smtp_pass: String = dotenvy::var("SMTPCRED").unwrap();
             // Config SMTP
             let creds = Credentials::new(smtp_mail, smtp_pass);
 
@@ -458,17 +410,8 @@ fn build_email_html(destinataire: String, id_destinataire: Uuid) -> String {
 pub async fn finalise_subscribe(
     Extension(pool): Extension<PgPool>,
     extract::Path(uuid): extract::Path<Uuid>,
-    // jar: CookieJar,
     extract::Json(body): extract::Json<BlankUser>,
 ) -> impl IntoResponse {
-    // if let Some(jar) = jar.get("jwt_token") {
-    //     log::info!("cookie : {}", jar);
-    //     // yes jar
-    // } else {
-    //     //no jar
-    //     log::info!("no cookie");
-    // }
-
     let hashed_password = match hash(body.password, DEFAULT_COST) {
         Ok(hashed) => hashed,
         Err(e) => {
@@ -523,13 +466,6 @@ pub async fn refresh_token(
     let ip = addr.ip().to_string();
     let user_agent = headers["user-agent"].to_str().unwrap_or_default();
     let user_uuid = jwt.claims.user;
-    println!(
-        "user id : {:?} ip add {:?} user_agent: {:?} refresh_token: {:?}",
-        user_uuid,
-        ip,
-        user_agent,
-        refresh_jwt_str.to_string()
-    );
 
     let user_session = match sqlx::query_as::<_, UsersSession>("SELECT * FROM user_sessions  WHERE user_uuid=$1 AND ip_address=$2 AND user_agent=$3 AND refresh_token=$4  ")
         .bind(user_uuid)
@@ -597,8 +533,6 @@ pub async fn refresh_token(
             &EncodingKey::from_secret("secret".as_ref()),
         )
         .unwrap_or_default();
-
-        println!("new refresh_token: {:?}", refresh_token.clone());
 
         //insertion du nouveau jwt refresh dans pour le remplacement
         match sqlx::query_as::<_, UsersSession>(
@@ -679,14 +613,6 @@ pub async fn logout(
     let refresh_token = jar.get("refresh").unwrap();
     let auth_token = jar.get("auth").unwrap();
 
-    eprintln!(
-        "logout ip {:?} ua {:?} refresh {:?} auth {:?}",
-        addr.ip(),
-        headers["user-agent"],
-        refresh_token,
-        auth_token
-    );
-
     let auth_jwt_str = auth_token.value();
     let refresh_jwt_str = refresh_token.value();
 
@@ -705,10 +631,6 @@ pub async fn logout(
     let ip = addr.ip().to_string();
     let user_agent = headers["user-agent"].to_str().unwrap_or_default();
 
-    eprintln!(
-        "{:?} {} {:?} {} {}",
-        uuid_session, user_agent, ip, refresh_jwt_str, auth_jwt_str
-    );
     let _user_session = match sqlx::query_as::<_, UsersSession>("DELETE FROM user_sessions  WHERE user_uuid=$1 AND ip_address=$2 AND user_agent=$3 RETURNING *")
         .bind(uuid_session)
         .bind(ip)
