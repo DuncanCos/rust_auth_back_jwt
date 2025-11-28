@@ -1,4 +1,4 @@
-use chrono;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
@@ -14,8 +14,8 @@ pub struct UsersSession {
     pub refresh_token: String,
     pub uuid: Uuid,
     pub disponibility: String,
-    pub expires_at: chrono::NaiveDateTime,
-    pub created_at: chrono::NaiveDateTime,
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

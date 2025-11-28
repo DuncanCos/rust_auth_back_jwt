@@ -1,11 +1,7 @@
 use crate::models::user_model::Users;
 use crate::models::user_session_model::UsersSession;
 use axum::http::StatusCode;
-use axum::{
-    extract,  extract::Path, response::IntoResponse,
-    Extension, Json,
-};
-
+use axum::{extract, extract::Path, response::IntoResponse, Extension, Json};
 
 use std::time::Duration as stdDuration;
 
@@ -13,8 +9,6 @@ use sqlx::postgres::PgPool;
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-
-
 
 use chrono::{prelude::*, Utc};
 
@@ -108,14 +102,5 @@ pub async fn all_sessions(Extension(pool): Extension<PgPool>) -> impl IntoRespon
             let message = "Unable to fetch users".to_string();
             (StatusCode::INTERNAL_SERVER_ERROR, message).into_response()
         }
-    }
-}
-
-pub fn timing_attack_delay(start_time: DateTime<Utc>) {
-    let ended_timing = Utc::now();
-    let time_between = ended_timing.signed_duration_since(start_time);
-    if time_between.num_milliseconds() < 750 {
-        let time_remaining = 750 - time_between.num_milliseconds();
-        std::thread::sleep(stdDuration::from_millis(time_remaining as u64));
     }
 }

@@ -4,7 +4,7 @@ CREATE TABLE Users (
     roles VARCHAR(255) NOT NULL DEFAULT 'user',
     mail VARCHAR(150) UNIQUE NOT NULL,
     password TEXT NOT NULL DEFAULT 'nope',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE user_sessions (
@@ -17,6 +17,6 @@ CREATE TABLE user_sessions (
     refresh_token TEXT UNIQUE NOT NULL, -- Stocke le Refresh Token unique
     uuid UUID UNIQUE NOT NULL,
     disponibility VARCHAR(255) NOT NULL DEFAULT 'valid',
-    expires_at TIMESTAMP NOT NULL,  -- Expiration du token
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    expires_at TIMESTAMPTZ NOT NULL,  -- Expiration du token
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );

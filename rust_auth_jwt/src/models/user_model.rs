@@ -1,4 +1,4 @@
-use chrono;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
@@ -10,7 +10,7 @@ pub struct Users {
     pub roles: String,
     pub mail: String,
     pub password: String,
-    pub created_at: chrono::NaiveDateTime,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Serialize, Deserialize, Debug, FromRow, Default)]
@@ -33,4 +33,10 @@ pub struct LoginUser {
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct BlankUser {
     pub password: String,
+}
+
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
+pub struct UserClaims {
+    pub user: Uuid,
+    pub roles: String,
 }

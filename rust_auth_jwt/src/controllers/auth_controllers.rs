@@ -340,7 +340,9 @@ pub async fn subscribe(
             // Config SMTP
             let creds = Credentials::new(smtp_mail, smtp_pass);
 
-            let mailer = match SmtpTransport::starttls_relay("smtp.ethereal.email") {
+            let smtp_host: String = dotenvy::var("SMTP_HOST").unwrap();
+
+            let mailer = match SmtpTransport::starttls_relay(&smtp_host) {
                 Ok(builder) => builder.port(587).credentials(creds).build(),
                 Err(e) => {
                     let body = json!({"error": format!("Erreur de configuration SMTP : {}", e)});
@@ -366,7 +368,8 @@ pub async fn subscribe(
 }
 
 fn build_email(destinataire: &str, body: &str) -> Result<Message, String> {
-    let from_address: Mailbox = "lexus10@ethereal.email"
+    let smtp_from: String = dotenvy::var("SMTP_FROM").unwrap();
+    let from_address: Mailbox = smtp_from
         .parse()
         .map_err(|e| format!("Erreur d'adresse d'expéditeur: {}", e))?;
 
@@ -384,7 +387,8 @@ fn build_email(destinataire: &str, body: &str) -> Result<Message, String> {
 }
 
 fn build_email_html(destinataire: String, id_destinataire: Uuid) -> String {
-    let confirmation_url = format!("http://localhost:5173/auth/{}", id_destinataire);
+    let front_url: String = dotenvy::var("FRONT_URL").unwrap();
+    let confirmation_url = format!("{}/auth/{}", front_url, id_destinataire);
 
     let mail = format!(
         "<html>
@@ -483,7 +487,7 @@ pub async fn refresh_token(
     //verification dans la db
     let session_date_expire = user_session.expires_at;
 
-    let now = Utc::now().naive_utc();
+    let now = Utc::now();
 
     let diff = now > session_date_expire;
 

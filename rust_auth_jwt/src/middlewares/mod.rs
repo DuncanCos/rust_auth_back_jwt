@@ -12,6 +12,7 @@ use axum_extra::extract::cookie::CookieJar;
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use sqlx::postgres::PgPool;
 
+use crate::models::user_model::UserClaims;
 use crate::models::user_session_model::{Claims, RefreshClaims, UsersSession};
 
 pub async fn test_middleware(
@@ -20,7 +21,7 @@ pub async fn test_middleware(
     cookies: tower_cookies::Cookies,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    req: Request,
+    mut req: Request,
     next: Next,
 ) -> impl IntoResponse {
     // recuperer les 2 cookie  auth et refresh et les met en &str
@@ -110,10 +111,17 @@ pub async fn test_middleware(
         }
         Err(_err) => {
             // eprintln!("Database query failed: {:?}", err);
-            let message = "Unable to fetch users middleware".to_string();
-            return (StatusCode::INTERNAL_SERVER_ERROR, message).into_response();
+
+            return (StatusCode::FORBIDDEN, "relog needed").into_response();
         }
     }
+
+    let user_claims = UserClaims {
+        user: jwt.claims.user,
+        roles: jwt.claims.roles,
+    };
+
+    req.extensions_mut().insert(user_claims);
 
     eprintln!("isok go next");
     next.run(req).await
